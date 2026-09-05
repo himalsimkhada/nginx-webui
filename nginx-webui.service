@@ -1,0 +1,18 @@
+[Unit]
+Description=nginx-webui backend (API-only)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/nginx-webui
+EnvironmentFile=-/etc/nginx-webui.env
+ExecStart=/opt/nginx-webui/venv/bin/python app.py
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=false
+# Let nginx reload via sudo (if unprivileged): install with
+#   echo 'himal ALL=(ALL) NOPASSWD: /usr/sbin/nginx, /bin/systemctl restart nginx' > /etc/sudoers.d/nginx-webui
+
+[Install]
+WantedBy=multi-user.target

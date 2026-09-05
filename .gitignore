@@ -1,0 +1,20 @@
+# Load-bearing: never commit live config or secrets
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+*.egg-info/
+
+# Systemd / logs
+*.service~
+*.log
+sessions.sqlite
+
+# Editor/OS
+.DS_Store
+.idea/
+.vscode/
