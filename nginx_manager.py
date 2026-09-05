@@ -59,6 +59,17 @@ def _write_file(path, content):
 
 # ── Status ──────────────────────────────────────────────────────────────────
 
+def _process_alive(pid):
+    """Liveness without signalling: /proc entry exists for any owner; fall
+    back to signal 0 for cooperative processes."""
+    if not pid:
+        return False
+    if os.path.exists(f"/proc/{pid}"):
+        return True
+    _, _, rc = _run(f"kill -0 {shlex.quote(pid)}")
+    return rc == 0
+
+
 def status():
     version = ""
     out, err, _ = _run("nginx -v")
@@ -68,18 +79,11 @@ def status():
     master_pid = ""
     running = False
     if pid_path.exists():
-        running = True
         try:
             master_pid = pid_path.read_text().strip()
         except Exception:
             pass
-    if pid_path.exists():
-        try:
-            _run(f"kill -0 {shlex.quote(master_pid)}")
-        except Exception:
-            pass
-        if _run(f"kill -0 {shlex.quote(master_pid)}")[2] != 0:
-            running = False
+        running = pid_path.exists() and _process_alive(master_pid)
 
     workers = 0
     try:
