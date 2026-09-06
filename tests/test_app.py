@@ -141,6 +141,21 @@ def test_site_update_from_fields(client):
     assert d["fields"]["proxy_pass"] == "http://10.0.0.9:9000"
 
 
+def test_site_route_separate_http_https_ports(client):
+    _login(client)
+    r = client.post("/api/site", json={
+        "name": "sep", "domain": "sep.x.com", "upstream": "http://10.0.0.1:1",
+        "port": 8443, "http_port": 8080, "tls": True,
+        "cert": "/etc/ssl/f.pem", "key": "/etc/ssl/k.pem", "redirect_http": True,
+    })
+    assert r.status_code == 200
+    d = client.get("/api/site/sep").get_json()["data"]
+    assert "listen 8080;" in d["content"]
+    assert "listen 8443 ssl;" in d["content"]
+    assert d["fields"]["listen"] == 8443
+    assert d["fields"]["http_listen"] == 8080
+
+
 def test_site_update_requires_valid_state(client):
     _login(client)
     r = client.put("/api/site/ghost", json={"domain": "x.test", "upstream": "http://x"})

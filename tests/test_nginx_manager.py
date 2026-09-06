@@ -185,6 +185,23 @@ def test_make_server_block_tls_requires_cert():
         mgr.make_server_block("s.test", "http://x", tls=True)
 
 
+def test_make_server_block_http_port_for_redirect():
+    body = mgr.make_server_block("s.test", "http://10.0.0.1:9000", port=8443, http_port=8080,
+                                 tls=True, cert="/c.pem", key="/k.pem", redirect_http=True)
+    assert "listen 8080;" in body
+    assert "listen 8443 ssl;" in body
+    assert body.count("server {") == 2
+
+
+def test_create_site_parses_separate_ports(conf):
+    mgr.create_site("sep", "sep.test", "http://127.0.0.1:3000", port=8443, http_port=8080,
+                    tls=True, cert="/c.pem", key="/k.pem", redirect_http=True)
+    f = mgr.read_site("sep")["fields"]
+    assert f["listen"] == 8443
+    assert f["http_listen"] == 8080
+    assert f["redirect_http"] is True
+
+
 def test_read_site_parses_common_fields(conf):
     mgr.create_site(
         "tls.test", "tls.test", "http://127.0.0.1:3000", port=443,

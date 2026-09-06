@@ -240,18 +240,40 @@ def sites():
     return out
 
 
+def _site_listen_ports(content):
+    """Collect (port, ssl) pairs from all listen directives in a config."""
+    out = []
+    for m in re.finditer(r"listen\s+([^;]+);", content):
+        directive = m.group(1).strip()
+        ssl = bool(re.search(r"\bssl\b", directive))
+        bare = directive.split()[0].replace("[::]:", "").replace("*:", "").strip()
+        if bare.isdigit():
+            out.append((int(bare), ssl))
+    return out
+
+
 def _site_fields(content):
     """Best-effort parse of the fields the wizard manages."""
     def _one(pat):
         m = re.search(pat, content)
         return m.group(1).strip() if m else ""
-    listen = _one(r"listen\s+(\d+)")
     names = _one(r"server_name\s+([^;]+);")
     ssl = bool(re.search(r"listen\s+\d+\s*ssl\b", content)) or \
         bool(re.search(r"^\s*ssl_certificate\b", content, re.M))
+    ports = _site_listen_ports(content)
+    ssl_ports = [p for p, is_ssl in ports if is_ssl]
+    plain_ports = [p for p, is_ssl in ports if not is_ssl]
+    listen = (ssl_ports or plain_ports or [None])[0]
+    if plain_ports:
+        http_listen = plain_ports[0]
+    elif ssl_ports:
+        http_listen = None
+    else:
+        http_listen = listen
     return {
         "server_name": names.split()[0] if names else "",
-        "listen": int(listen) if listen.isdigit() else None,
+        "listen": listen,
+        "http_listen": http_listen,
         "proxy_pass": _one(r"proxy_pass\s+([^\s;]+);"),
         "websocket": "upgrade" in content,
         "ssl": ssl,
@@ -281,8 +303,8 @@ def write_site(name, content):
     return {"name": name, "path": str(path)}
 
 
-def update_site(name, content=None, domain=None, upstream=None, port=80, websocket=False, new_name=None,
-                tls=None, cert=None, key=None, redirect_http=None,
+def update_site(name, content=None, domain=None, upstream=None, port=80, http_port=80, websocket=False,
+                new_name=None, tls=None, cert=None, key=None, redirect_http=None,
                 client_max_body_size=None, proxy_read_timeout=None):
     """Update a site from raw content or wizard fields; optionally rename the file."""
     new_name = _safe_site_name(new_name) if new_name not in (None, "") else None
@@ -300,6 +322,7 @@ def update_site(name, content=None, domain=None, upstream=None, port=80, websock
         new_domain = (domain if domain not in (None, "") else fields.get("server_name")) or ""
         new_upstream = (upstream if upstream not in (None, "") else fields.get("proxy_pass")) or "http://127.0.0.1:3000"
         new_port = int(port) if port not in (None, "") else (fields.get("listen") or 80)
+        new_http_port = int(http_port) if http_port not in (None, "") else (fields.get("http_listen") or 80)
         if not new_domain:
             raise RuntimeError("Provide a domain to edit this site from the form")
         new_tls = bool(tls) if tls is not None else bool(fields.get("ssl"))
@@ -311,7 +334,7 @@ def update_site(name, content=None, domain=None, upstream=None, port=80, websock
         new_timeout = proxy_read_timeout if proxy_read_timeout is not None \
             else (fields.get("proxy_read_timeout") or None)
         body = make_server_block(
-            new_domain, new_upstream, port=new_port, websocket=bool(websocket),
+            new_domain, new_upstream, port=new_port, http_port=new_http_port, websocket=bool(websocket),
             tls=new_tls, cert=new_cert, key=new_key, redirect_http=new_redirect,
             client_max_body_size=new_cmb, proxy_read_timeout=new_timeout,
         )
@@ -405,8 +428,8 @@ server {{
 
 _REDIRECT_TEMPLATE = """
 server {{
-    listen 80;
-    listen [::]:80;
+    listen {port};
+    listen [::]:{port};
 
     server_name {domain};
 
@@ -415,7 +438,7 @@ server {{
 """
 
 
-def make_server_block(domain, upstream, port=80, websocket=False, tls=False,
+def make_server_block(domain, upstream, port=80, http_port=80, websocket=False, tls=False,
                       cert=None, key=None, redirect_http=False,
                       client_max_body_size=None, proxy_read_timeout=None):
     domain = (domain or "").strip().lower()
@@ -442,18 +465,18 @@ def make_server_block(domain, upstream, port=80, websocket=False, tls=False,
     except (ValueError, KeyError) as e:
         raise RuntimeError(f"Invalid server-block parameters: {e}")
     if tls and redirect_http:
-        body = _REDIRECT_TEMPLATE.format(domain=domain) + "\n" + body
+        body = _REDIRECT_TEMPLATE.format(domain=domain, port=int(http_port) or 80) + "\n" + body
     return body
 
 
-def create_site(name, domain, upstream, port=80, websocket=False, overwrite=False,
+def create_site(name, domain, upstream, port=80, http_port=80, websocket=False, overwrite=False,
                 tls=False, cert=None, key=None, redirect_http=False,
                 client_max_body_size=None, proxy_read_timeout=None):
     name = _safe_site_name(name or domain)
     path = _sites_available_dir() / name
     if path.exists() and not overwrite:
         raise RuntimeError(f"Site {name} already exists")
-    body = make_server_block(domain, upstream, port=port, websocket=websocket,
+    body = make_server_block(domain, upstream, port=port, http_port=http_port, websocket=websocket,
                              tls=tls, cert=cert, key=key, redirect_http=redirect_http,
                              client_max_body_size=client_max_body_size,
                              proxy_read_timeout=proxy_read_timeout)
