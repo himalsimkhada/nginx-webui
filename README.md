@@ -18,6 +18,28 @@ talks to this service over plain HTTP on port `8400`.
 
 ## Quick start
 
+### Automatic installer
+
+Interactive installer with two modes — **1) Docker + host control agent**
+(web-UI container managing the nginx installed on *this* machine) and
+**2) Manual** (systemd + venv, all on this machine):
+
+```bash
+# from a clone
+./install.sh                 # menu; --check / --help also available
+
+# or without a checkout (one-liner)
+curl -fsSL https://raw.githubusercontent.com/himalsimkhada/nginx-webui/main/install.sh | bash
+```
+
+Mode 1 installs `host_agent.py` + `nginx-webui-host-agent.service` so status,
+`nginx -t`, reload and restart act on the host nginx, then writes `.env` with
+`NGINX_CTL_URL=http://host.docker.internal:9401` and starts `docker compose`.
+Mode 2 creates a venv, writes `/etc/nginx-webui.env`, and installs a systemd
+unit exporting port `8400`.
+
+### Manual (not via the script)
+
 ```bash
 git clone git@github.com:himalsimkhada/nginx-webui.git
 cd nginx-webui
