@@ -69,6 +69,16 @@ NGINX_CTL_URL=http://host.docker.internal:9401                   # mandatory for
 On bare metal (systemd/venv on the host) leave both empty — the service talks
 to the host nginx directly (needs the `sudo` rules below).
 
+### The `.env` in the UI
+
+The nginx-webui environment file (where `NGINX_STATUS_URL` / `NGINX_CTL_URL`
+live) shows up as **`.env`** in the dashboard's Config Files editor so you can
+see and change it without SSH. Bare metal: `/etc/nginx-webui.env` (the systemd
+`EnvironmentFile`). Docker: `./.env` next to `docker-compose.yml` is mounted at
+that path (`NGINX_WEBUI_ENV_FILE=/etc/nginx-webui.env` by default; override with
+`NGINX_WEBUI_ENV_FILE`). Edits apply after restarting the service or
+`docker compose up -d`.
+
 ## API
 
 | Method | Endpoint | Description |

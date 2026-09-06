@@ -17,6 +17,8 @@ services:
       - /etc/nginx:/etc/nginx:rw
       - /var/log/nginx:/var/log/nginx:rw
       - /var/run/nginx.pid:/var/run/nginx.pid:rw
+      # expose the env file to the UI as ".env" in the Config Files editor
+      - ./.env:/etc/nginx-webui.env:rw
     extra_hosts:
       - "host.docker.internal:host-gateway"
     read_only: false

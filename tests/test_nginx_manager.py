@@ -98,6 +98,26 @@ def test_config_files_lists_entries_and_dirs(conf):
     assert "conf.d/compression.conf" in files
 
 
+def test_env_file_listed_when_present(conf, monkeypatch, tmp_path):
+    env_file = tmp_path / "nginx-webui.env"
+    env_file.write_text("NGINX_STATUS_URL=\nNGINX_CTL_URL=\n")
+    monkeypatch.setattr(mgr, "ENV_FILE_PATH", env_file)
+    files = mgr.config_files()
+    assert ".env" in files
+    got = mgr.read_config(".env")
+    assert "NGINX_STATUS_URL" in got["content"]
+    assert got["path"] == str(env_file)
+    mgr.write_config(".env", "NGINX_STATUS_URL=http://x\n")
+    assert env_file.read_text() == "NGINX_STATUS_URL=http://x\n"
+
+
+def test_env_file_omitted_when_absent(conf, monkeypatch, tmp_path):
+    monkeypatch.setattr(mgr, "ENV_FILE_PATH", tmp_path / "missing.env")
+    assert ".env" not in mgr.config_files()
+    with pytest.raises(RuntimeError):
+        mgr.read_config(".env")
+
+
 def test_read_write_config_roundtrip(conf):
     mgr.write_config("conf.d/extra.conf", "client_max_body_size 25m;")
     out = mgr.read_config("conf.d/extra.conf")

@@ -26,6 +26,12 @@ NGINX_STATUS_URL = os.environ.get("NGINX_STATUS_URL", "").strip()
 # nginx-webui runs in a container (it cannot signal the host master itself).
 NGINX_CTL_URL = os.environ.get("NGINX_CTL_URL", "").strip()
 
+# The nginx-webui environment file (NGINX_STATUS_URL / NGINX_CTL_URL / …).
+# Shown as ".env" in the config-file editor when present. The bare-metal
+# default matches the systemd EnvironmentFile; docker-compose mounts ./.env
+# at this path. Edits take effect after the service is restarted.
+ENV_FILE_PATH = Path(os.environ.get("NGINX_WEBUI_ENV_FILE", "/etc/nginx-webui.env"))
+
 NGINX_CONF = f"{NGINX_CONF_DIR}/nginx.conf"
 _IS_ROOT = hasattr(os, "geteuid") and os.geteuid() == 0
 
@@ -226,10 +232,14 @@ def config_files():
         elif base.is_dir():
             for p in sorted(base.rglob("*.conf")):
                 files.append(str(p.relative_to(NGINX_CONF_DIR)))
+    if ENV_FILE_PATH.is_file():
+        files.append(".env")
     return files
 
 
 def _resolve(relative):
+    if relative in (".env", "./.env"):
+        return ENV_FILE_PATH
     base = Path(NGINX_CONF_DIR).resolve()
     target = (base / relative).resolve()
     if base != target and base not in target.parents:
