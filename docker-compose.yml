@@ -11,6 +11,7 @@ services:
       NGINX_CONF_DIR: /etc/nginx
       LOG_FILE: ${LOG_FILE:-}
       NGINX_STATUS_URL: ${NGINX_STATUS_URL:-}
+      NGINX_CTL_URL: ${NGINX_CTL_URL:-}
       SERVICE_NAME: nginx-webui
     volumes:
       - /etc/nginx:/etc/nginx:rw
@@ -20,7 +21,10 @@ services:
       - "host.docker.internal:host-gateway"
     read_only: false
 
-  # Optional: a second instance-fronting "edge" nginx running inside the
-  # container is NOT supported for reload/restart (those need the host binary
-  # and a signal to the host master process). Config editing + `nginx -t`
-  # work against the mounted config; reloads happen on the host.
+  # The container edits the host's /etc/nginx (mounted above) but cannot
+  # signal/restart the host nginx master. Run the host-side control agent
+  # (host_agent.py, repo root, e.g. via nginx-webui-host-agent.service) on
+  # the nginx host and set:
+  #   NGINX_STATUS_URL=http://host.docker.internal:8080/nginx_status
+  #   NGINX_CTL_URL=http://host.docker.internal:9401
+  # so status, `nginx -t`, reload and restart act on the HOST nginx.

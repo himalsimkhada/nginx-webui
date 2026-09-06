@@ -47,9 +47,27 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
-The container mounts `/etc/nginx` and `/var/log/nginx` from the host. Config
-editing, `nginx -t`, and site management work from the container; `reload`/
-`restart` are **host-side only** (they signal the host master process).
+The container mounts `/etc/nginx` and `/var/log/nginx` from the host, so config
+editing, `nginx -t`, and site management work from the container. The container
+**cannot** signal or restart the host nginx master itself, so to make status,
+`nginx -t`, reload and restart act on the *host* nginx, run the **host control
+agent** on the nginx host and point the container at it:
+
+```bash
+# on the nginx host, as root
+sudo cp host_agent.py /usr/local/bin/nginx-webui-host-agent.py
+sudo cp nginx-webui-host-agent.service /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable --now nginx-webui-host-agent
+```
+
+```bash
+# in .env (docker-compose)
+NGINX_STATUS_URL=http://host.docker.internal:8080/nginx_status   # optional, host stub_status
+NGINX_CTL_URL=http://host.docker.internal:9401                   # mandatory for control
+```
+
+On bare metal (systemd/venv on the host) leave both empty — the service talks
+to the host nginx directly (needs the `sudo` rules below).
 
 ## API
 

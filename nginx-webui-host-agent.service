@@ -1,0 +1,15 @@
+[Unit]
+Description=nginx host control agent for nginx-webui (Docker)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/nginx-webui-host-agent.py --bind 127.0.0.1 --port 9401
+Restart=on-failure
+RestartSec=3
+# Run as root. If unprivileged, instead install passwordless sudo rules, e.g.:
+#   echo 'nginxadmin ALL=(ALL) NOPASSWD: /usr/sbin/nginx, /bin/systemctl restart nginx' > /etc/sudoers.d/nginx-webui-agent
+
+[Install]
+WantedBy=multi-user.target

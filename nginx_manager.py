@@ -21,6 +21,10 @@ TIMEOUT = int(os.environ.get("NGINX_TIMEOUT", "10"))
 # /nginx_status) to detect "running" over HTTP — required when nginx-webui
 # runs in a container and cannot see the host's /proc or /run/nginx.pid.
 NGINX_STATUS_URL = os.environ.get("NGINX_STATUS_URL", "").strip()
+# Set this to the host-side control agent (repo: host_agent.py) so status,
+# `nginx -t`, reload and restart act on the HOST nginx — required when
+# nginx-webui runs in a container (it cannot signal the host master itself).
+NGINX_CTL_URL = os.environ.get("NGINX_CTL_URL", "").strip()
 
 NGINX_CONF = f"{NGINX_CONF_DIR}/nginx.conf"
 _IS_ROOT = hasattr(os, "geteuid") and os.geteuid() == 0
@@ -76,9 +80,41 @@ def _process_alive(pid):
     return rc == 0
 
 
+def _host_probe(action, method="POST", timeout=20):
+    """Talk to the host-side control agent (NGINX_CTL_URL)."""
+    url = f"{NGINX_CTL_URL.rstrip('/')}/{action}"
+    if method == "GET":
+        req = urllib.request.Request(url, method="GET")
+    else:
+        req = urllib.request.Request(url, method="POST", data=b"{}")
+        req.add_header("Content-Type", "application/json")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read().decode("utf-8", "replace") or "{}")
+    except OSError as e:
+        raise RuntimeError(f"nginx control agent unreachable at {NGINX_CTL_URL}: {e}")
+
+
 def status():
+    if NGINX_CTL_URL:
+        p = _host_probe("status", method="GET")
+        if not isinstance(p, dict):
+            raise RuntimeError("nginx control agent returned an invalid status")
+        return {
+            "version": p.get("version") or "(unknown)",
+            "running": bool(p.get("running")),
+            "master_pid": p.get("master_pid", ""),
+            "workers": p.get("workers", 0),
+            "config_file": p.get("config_file") or NGINX_CONF,
+            "conf_dir": p.get("conf_dir") or NGINX_CONF_DIR,
+            "status_source": "agent",
+        }
     if NGINX_STATUS_URL:
         return _status_http()
+    return _status_local()
+
+
+def _status_local():
     version = ""
     out, err, _ = _run("nginx -v")
     version = (err or out).strip().replace("nginx version:", "").replace("nginx/", "", 1).strip()
@@ -144,11 +180,19 @@ def _status_http():
 
 
 def check_config():
+    if NGINX_CTL_URL:
+        p = _host_probe("check")
+        return {"valid": bool(p.get("ok") or p.get("valid")), "output": p.get("output", ""), "error": p.get("error", "")}
     out, err, rc = _run(f"{_sudo()}nginx -t -c {shlex.quote(NGINX_CONF)}")
     return {"valid": rc == 0, "output": out, "error": err}
 
 
 def reload():
+    if NGINX_CTL_URL:
+        p = _host_probe("reload")
+        if not p.get("ok"):
+            raise RuntimeError(p.get("error") or "nginx reload failed on host")
+        return {"output": p.get("output", ""), "message": "nginx reloaded via host agent"}
     out, err, rc = _run(f"{_sudo()}nginx -s reload")
     if rc != 0:
         raise RuntimeError(err or out or "nginx reload failed")
@@ -156,6 +200,11 @@ def reload():
 
 
 def restart():
+    if NGINX_CTL_URL:
+        p = _host_probe("restart")
+        if not p.get("ok"):
+            raise RuntimeError(p.get("error") or "nginx restart failed on host")
+        return {"output": p.get("output", ""), "message": "nginx restarted via host agent"}
     out, err, rc = _run(f"{_sudo()}systemctl restart nginx")
     if rc != 0:
         raise RuntimeError(err or out or "nginx restart failed")

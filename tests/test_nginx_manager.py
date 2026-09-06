@@ -3,6 +3,7 @@
 All file operations run against a temp nginx layout and the nginx binary
 is faked via _run, so the suite works on CI without nginx installed.
 """
+import json
 import os
 import sys
 import urllib.request
@@ -410,6 +411,91 @@ class FakeHTTPResp:
 
     def read(self, n):
         return self.body.encode()
+
+
+class FakeCTLResp:
+    """Control-agent response: returns the given JSON payload."""
+
+    def __init__(self, payload):
+        self.payload = payload
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def read(self, n=-1):
+        return json.dumps(self.payload).encode()
+
+
+def test_status_via_agent(conf, monkeypatch):
+    def urlopen(req, timeout=None):
+        return FakeCTLResp({
+            "version": "1.26.0", "running": True, "master_pid": "999",
+            "workers": 4, "config_file": "/etc/nginx/nginx.conf",
+            "conf_dir": "/etc/nginx", "status_source": "agent",
+        })
+
+    monkeypatch.setattr(mgr, "NGINX_CTL_URL", "http://127.0.0.1:9401")
+    monkeypatch.setattr(urllib.request, "urlopen", urlopen)
+    s = mgr.status()
+    assert s["status_source"] == "agent"
+    assert s["version"] == "1.26.0"
+    assert s["master_pid"] == "999"
+    assert s["running"] is True
+    assert s["workers"] == 4
+
+
+def test_control_via_agent(conf, monkeypatch):
+    requests = []
+
+    def urlopen(req, timeout=None):
+        requests.append(req.full_url)
+        if req.full_url.endswith("/status"):
+            return FakeCTLResp({"version": "v", "running": True})
+        return FakeCTLResp({"ok": True, "output": "sent", "error": ""})
+
+    monkeypatch.setattr(mgr, "NGINX_CTL_URL", "http://127.0.0.1:9401")
+    monkeypatch.setattr(urllib.request, "urlopen", urlopen)
+    assert mgr.reload()["message"].startswith("nginx reloaded via host agent")
+    assert mgr.restart()["message"].startswith("nginx restarted via host agent")
+    assert mgr.check_config()["valid"] is True
+    assert any(u.endswith("/reload") for u in requests)
+    assert any(u.endswith("/restart") for u in requests)
+    assert any(u.endswith("/check") for u in requests)
+
+
+def test_control_via_agent_failure(conf, monkeypatch):
+    def urlopen(req, timeout=None):
+        return FakeCTLResp({"ok": False, "output": "", "error": "syntax error"})
+
+    monkeypatch.setattr(mgr, "NGINX_CTL_URL", "http://127.0.0.1:9401")
+    monkeypatch.setattr(urllib.request, "urlopen", urlopen)
+    with pytest.raises(RuntimeError):
+        mgr.reload()
+    assert mgr.check_config()["valid"] is False
+
+
+def test_control_agent_unreachable(conf, monkeypatch):
+    import urllib.error
+
+    def boom(req, timeout=None):
+        raise urllib.error.URLError("refused")
+
+    monkeypatch.setattr(mgr, "NGINX_CTL_URL", "http://127.0.0.1:9")
+    monkeypatch.setattr(urllib.request, "urlopen", boom)
+    with pytest.raises(RuntimeError):
+        mgr.reload()
+
+
+def test_status_local_preferred_without_agent(conf, monkeypatch):
+    monkeypatch.setattr(mgr, "NGINX_CTL_URL", "")
+    monkeypatch.setattr(mgr, "NGINX_STATUS_URL", "")
+    monkeypatch.setattr(mgr, "_run", fake_run())
+    s = mgr.status()
+    assert s.get("status_source") != "agent"
+    assert s["running"] is True
 
 
 def test_re_status_http(conf, monkeypatch):
