@@ -464,12 +464,36 @@ def create_site(name, domain, upstream, port=80, websocket=False, overwrite=Fals
 # ── Saved SSL certificates (named cert/key pairs) ────────────────────────────
 # Sites reference these in the UI; only the paths matter to the generated
 # config, so storing them here just avoids retyping long letsencrypt paths.
+# An entry is either a pair of paths ("path" mode) or pasted PEM content
+# ("content" mode) that is written to SSL_CERTS_DIR so both the host nginx
+# master and this service (container-mounted /etc/nginx) can read it.
 
 SSL_STORE_FILE = os.environ.get("SSL_STORE_FILE", f"{NGINX_CONF_DIR}/webui-ssl-store.json")
+SSL_CERTS_DIR = os.environ.get("SSL_CERTS_DIR", f"{NGINX_CONF_DIR}/ssl")
+
+_PEM_CERT_RE = re.compile(r"-----BEGIN [A-Z ]*CERTIFICATE-----")
+_PEM_KEY_RE = re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----")
 
 
 def _ssl_name_ok(name):
     return bool(name) and name != "." and name != ".." and "/" not in name and "\\" not in name
+
+
+def _mkdir_p(path):
+    try:
+        Path(path).mkdir(parents=True, exist_ok=True)
+    except PermissionError:
+        _run(f"{_sudo()}mkdir -p {shlex.quote(str(path))}")
+
+
+def _rmtree(path):
+    try:
+        import shutil
+        shutil.rmtree(path)
+    except FileNotFoundError:
+        pass
+    except PermissionError:
+        _run(f"{_sudo()}rm -rf {shlex.quote(str(path))}")
 
 
 def _load_ssl_store():
@@ -497,6 +521,28 @@ def _save_ssl_store(entries):
         _write_file(SSL_STORE_FILE, payload)
 
 
+def _ssl_from_content(name, cert_content, key_content):
+    """Write pasted PEM to SSL_CERTS_DIR/<name>/ and return the stored entry."""
+    cert_content = (cert_content or "").strip()
+    key_content = (key_content or "").strip()
+    if not cert_content or not key_content:
+        raise RuntimeError("Both certificate and key content are required")
+    if not _PEM_CERT_RE.search(cert_content):
+        raise RuntimeError("Certificate content does not look like a PEM certificate")
+    if not _PEM_KEY_RE.search(key_content):
+        raise RuntimeError("Key content does not look like a PEM private key")
+    d = Path(SSL_CERTS_DIR) / name
+    _mkdir_p(d)
+    cert_path = d / "fullchain.pem"
+    key_path = d / "privkey.pem"
+    _write_file(str(cert_path), cert_content + "\n")
+    _write_file(str(key_path), key_content + "\n")
+    return {
+        "cert": str(cert_path), "key": str(key_path),
+        "mode": "content", "cert_content": cert_content, "key_content": key_content,
+    }
+
+
 def ssl_certs():
     return [{"name": name, **entry} for name, entry in sorted(_load_ssl_store().items())]
 
@@ -508,41 +554,53 @@ def get_ssl(name):
     return {"name": name, **entry}
 
 
-def add_ssl(name, cert, key):
+def add_ssl(name, cert=None, key=None, cert_content=None, key_content=None):
     name = (name or "").strip()
-    cert = (cert or "").strip()
-    key = (key or "").strip()
     if not _ssl_name_ok(name):
         raise RuntimeError("Certificate name may not be empty, '.', '..' or contain '/' or '\\\\'")
-    if not cert or not key:
-        raise RuntimeError("Certificate and key paths are required")
+    use_content = bool((cert_content or "").strip() or (key_content or "").strip())
+    if use_content:
+        entry = _ssl_from_content(name, cert_content, key_content)
+    else:
+        cert = (cert or "").strip()
+        key = (key or "").strip()
+        if not cert or not key:
+            raise RuntimeError("Provide certificate/key paths, or paste the PEM content")
+        entry = {"cert": cert, "key": key}
     store = _load_ssl_store()
     if name in store:
         raise RuntimeError(f"Certificate '{name}' already exists")
-    store[name] = {"cert": cert, "key": key}
+    store[name] = entry
     _save_ssl_store(store)
-    return {"name": name, "cert": cert, "key": key}
+    return {"name": name, **entry}
 
 
-def update_ssl(name, cert, key):
-    cert = (cert or "").strip()
-    key = (key or "").strip()
-    if not cert or not key:
-        raise RuntimeError("Certificate and key paths are required")
+def update_ssl(name, cert=None, key=None, cert_content=None, key_content=None):
     store = _load_ssl_store()
     if name not in store:
         raise RuntimeError(f"Certificate '{name}' not found")
-    store[name] = {"cert": cert, "key": key}
+    use_content = bool((cert_content or "").strip() or (key_content or "").strip())
+    if use_content:
+        entry = _ssl_from_content(name, cert_content, key_content)
+    else:
+        cert = (cert or "").strip()
+        key = (key or "").strip()
+        if not cert or not key:
+            raise RuntimeError("Certificate and key paths are required")
+        entry = {"cert": cert, "key": key}
+    store[name] = entry
     _save_ssl_store(store)
-    return {"name": name, "cert": cert, "key": key}
+    return {"name": name, **entry}
 
 
 def delete_ssl(name):
     store = _load_ssl_store()
     if name not in store:
         raise RuntimeError(f"Certificate '{name}' not found")
-    del store[name]
+    entry = store.pop(name)
     _save_ssl_store(store)
+    if entry.get("mode") == "content":
+        _rmtree(Path(SSL_CERTS_DIR) / name)
     return {"name": name}
 
 

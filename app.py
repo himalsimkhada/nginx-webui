@@ -274,7 +274,13 @@ def api_ssl():
         return _ok(mgr.ssl_certs())
     body = request.get_json(silent=True) or {}
     try:
-        return _ok(mgr.add_ssl(body.get("name", ""), body.get("cert"), body.get("key")))
+        return _ok(mgr.add_ssl(
+            body.get("name", ""),
+            cert=body.get("cert"),
+            key=body.get("key"),
+            cert_content=body.get("cert_content"),
+            key_content=body.get("key_content"),
+        ))
     except RuntimeError as e:
         return _err(str(e), 400)
 
@@ -288,7 +294,13 @@ def api_ssl_one(name=""):
             return _err(str(e), 404)
     body = request.get_json(silent=True) or {}
     try:
-        return _ok(mgr.update_ssl(name, body.get("cert"), body.get("key")))
+        return _ok(mgr.update_ssl(
+            name,
+            cert=body.get("cert"),
+            key=body.get("key"),
+            cert_content=body.get("cert_content"),
+            key_content=body.get("key_content"),
+        ))
     except RuntimeError as e:
         return _err(str(e), 400)
 

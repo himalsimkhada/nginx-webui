@@ -6,6 +6,7 @@ is faked via _run, so the suite works on CI without nginx installed.
 import os
 import sys
 import urllib.request
+from pathlib import Path
 
 import pytest
 
@@ -262,10 +263,16 @@ def test_update_site_rename_keeps_content(conf):
 
 # ── Saved SSL certificates ───────────────────────────────────────────────
 
+CERT_PEM = "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n"
+KEY_PEM = "-----BEGIN PRIVATE KEY-----\nMIIE\n-----END PRIVATE KEY-----\n"
+
+
 @pytest.fixture()
 def ssl_store(conf, monkeypatch):
     path = conf / "webui-ssl-store.json"
+    certs_dir = conf / "ssl"
     monkeypatch.setattr(mgr, "SSL_STORE_FILE", str(path))
+    monkeypatch.setattr(mgr, "SSL_CERTS_DIR", str(certs_dir))
     if path.exists():
         path.unlink()
     return path
@@ -273,39 +280,85 @@ def ssl_store(conf, monkeypatch):
 
 def test_ssl_crud(ssl_store):
     assert mgr.ssl_certs() == []
-    mgr.add_ssl("le-main", "/etc/letsencrypt/full.pem", "/etc/letsencrypt/key.pem")
+    mgr.add_ssl("le-main", cert="/etc/letsencrypt/full.pem", key="/etc/letsencrypt/key.pem")
     certs = mgr.ssl_certs()
     assert len(certs) == 1
     assert certs[0]["name"] == "le-main"
     assert certs[0]["cert"] == "/etc/letsencrypt/full.pem"
     assert certs[0]["key"] == "/etc/letsencrypt/key.pem"
-    mgr.update_ssl("le-main", "/c2.pem", "/k2.pem")
+    mgr.update_ssl("le-main", cert="/c2.pem", key="/k2.pem")
     assert mgr.get_ssl("le-main")["cert"] == "/c2.pem"
     assert mgr.get_ssl("le-main")["key"] == "/k2.pem"
     mgr.delete_ssl("le-main")
     assert mgr.ssl_certs() == []
 
 
+def test_ssl_content_mode_writes_files(ssl_store):
+    r = mgr.add_ssl("pasted", cert_content=CERT_PEM, key_content=KEY_PEM)
+    assert r["mode"] == "content"
+    assert r["cert"] == str(Path(ssl_store).parent / "ssl" / "pasted" / "fullchain.pem")
+    assert Path(r["cert"]).read_text().strip() == CERT_PEM.strip()
+    assert Path(r["key"]).read_text().strip() == KEY_PEM.strip()
+    e = mgr.get_ssl("pasted")
+    assert e["cert_content"] == CERT_PEM.strip()
+    assert e["key_content"] == KEY_PEM.strip()
+
+
+def test_ssl_content_validation(ssl_store):
+    with pytest.raises(RuntimeError):
+        mgr.add_ssl("x", cert_content="not a pem", key_content=KEY_PEM)
+    with pytest.raises(RuntimeError):
+        mgr.add_ssl("x", cert_content=CERT_PEM, key_content="not a key")
+    with pytest.raises(RuntimeError):
+        mgr.add_ssl("x", cert_content=CERT_PEM)  # key content missing
+
+
+def test_ssl_content_update_rewrites_files(ssl_store):
+    mgr.add_ssl("pasted", cert_content=CERT_PEM, key_content=KEY_PEM)
+    cert2 = CERT_PEM.replace("MIIB", "MIIC")
+    mgr.update_ssl("pasted", cert_content=cert2, key_content=KEY_PEM)
+    e = mgr.get_ssl("pasted")
+    assert Path(e["cert"]).read_text().strip() == cert2.strip()
+    assert e["mode"] == "content"
+
+
+def test_ssl_content_delete_removes_files(ssl_store):
+    mgr.add_ssl("pasted", cert_content=CERT_PEM, key_content=KEY_PEM)
+    d = Path(mgr.get_ssl("pasted")["cert"]).parent
+    assert d.exists()
+    mgr.delete_ssl("pasted")
+    assert not d.exists()
+    assert mgr.ssl_certs() == []
+
+
+def test_ssl_path_to_content_switch(ssl_store):
+    mgr.add_ssl("x", cert="/c.pem", key="/k.pem")
+    mgr.update_ssl("x", cert_content=CERT_PEM, key_content=KEY_PEM)
+    e = mgr.get_ssl("x")
+    assert e["mode"] == "content"
+    assert Path(e["cert"]).read_text().strip() == CERT_PEM.strip()
+
+
 def test_ssl_validation(ssl_store):
     with pytest.raises(RuntimeError):
-        mgr.add_ssl("", "/c", "/k")
+        mgr.add_ssl("", cert="/c", key="/k")
     with pytest.raises(RuntimeError):
-        mgr.add_ssl("bad/name", "/c", "/k")
+        mgr.add_ssl("bad/name", cert="/c", key="/k")
     with pytest.raises(RuntimeError):
-        mgr.add_ssl("x", "", "/k")
+        mgr.add_ssl("x", cert="", key="/k")
     with pytest.raises(RuntimeError):
-        mgr.add_ssl("x", "/c", "")
+        mgr.add_ssl("x", cert="/c", key="")
 
 
 def test_ssl_duplicate(ssl_store):
-    mgr.add_ssl("x", "/c", "/k")
+    mgr.add_ssl("x", cert="/c", key="/k")
     with pytest.raises(RuntimeError):
-        mgr.add_ssl("x", "/c2", "/k2")
+        mgr.add_ssl("x", cert="/c2", key="/k2")
 
 
 def test_ssl_missing_ops(ssl_store):
     with pytest.raises(RuntimeError):
-        mgr.update_ssl("ghost", "/c", "/k")
+        mgr.update_ssl("ghost", cert="/c", key="/k")
     with pytest.raises(RuntimeError):
         mgr.delete_ssl("ghost")
 
@@ -313,7 +366,8 @@ def test_ssl_missing_ops(ssl_store):
 def test_ssl_store_persists_reload(conf, monkeypatch):
     path = conf / "webui-ssl-store.json"
     monkeypatch.setattr(mgr, "SSL_STORE_FILE", str(path))
-    mgr.add_ssl("persist", "/c.pem", "/k.pem")
+    monkeypatch.setattr(mgr, "SSL_CERTS_DIR", str(conf / "ssl"))
+    mgr.add_ssl("persist", cert="/c.pem", key="/k.pem")
     assert mgr._load_ssl_store()["persist"]["cert"] == "/c.pem"
     assert path.exists()
 
@@ -321,7 +375,7 @@ def test_ssl_store_persists_reload(conf, monkeypatch):
 def test_ssl_store_corrupt_file_ignored(ssl_store):
     ssl_store.write_text("{not json")
     assert mgr.ssl_certs() == []
-    mgr.add_ssl("fresh", "/c", "/k")
+    mgr.add_ssl("fresh", cert="/c", key="/k")
     assert len(mgr.ssl_certs()) == 1
 
 

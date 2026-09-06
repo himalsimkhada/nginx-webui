@@ -202,3 +202,19 @@ def test_ssl_route_errors(client, monkeypatch):
     assert client.post("/api/ssl", json={"name": "dup", "cert": "/x", "key": "/y"}).status_code == 400
     assert client.delete("/api/ssl/ghost").status_code == 404
     assert client.put("/api/ssl/ghost", json={"cert": "/c", "key": "/k"}).status_code == 400
+
+
+def test_ssl_route_content_mode(client, monkeypatch):
+    monkeypatch.setattr(mgr, "SSL_STORE_FILE", _ssl_path())
+    monkeypatch.setattr(mgr, "SSL_CERTS_DIR", str(mgr.NGINX_CONF_DIR) + "/ssl")
+    _login(client)
+    cert = "-----BEGIN CERTIFICATE-----\nAAA\n-----END CERTIFICATE-----\n"
+    key = "-----BEGIN PRIVATE KEY-----\nBBB\n-----END PRIVATE KEY-----\n"
+    r = client.post("/api/ssl", json={"name": "pasted", "cert_content": cert, "key_content": key})
+    assert r.status_code == 200
+    d = r.get_json()["data"]
+    assert d["mode"] == "content"
+    assert d["cert"].endswith("ssl/pasted/fullchain.pem")
+    assert client.get("/api/ssl").get_json()["data"][0]["mode"] == "content"
+    assert client.delete("/api/ssl/pasted").status_code == 200
+    assert client.post("/api/ssl", json={"name": "bad", "cert_content": "nope", "key_content": key}).status_code == 400
