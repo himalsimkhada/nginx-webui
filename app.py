@@ -152,6 +152,13 @@ def api_check():
     return _ok(result)
 
 
+@app.route("/api/control/check", methods=["GET", "POST"])
+def api_control_check():
+    """Alias of /api/check for the shared /api/control/<action> pattern the
+    webui facade uses for check/reload/restart."""
+    return api_check()
+
+
 @app.route("/api/system", methods=["GET"])
 def api_system():
     return _ok({"service": "nginx-webui"})

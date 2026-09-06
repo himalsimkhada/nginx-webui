@@ -80,6 +80,14 @@ def test_check_ok(client, monkeypatch):
     assert client.get("/api/check").get_json()["data"]["valid"] is True
 
 
+def test_control_check_alias(client, monkeypatch):
+    monkeypatch.setattr(mgr, "check_config", lambda: {"valid": True, "output": "ok", "error": ""})
+    _login(client)
+    r = client.post("/api/control/check")
+    assert r.status_code == 200
+    assert r.get_json()["data"]["valid"] is True
+
+
 def test_reload_error_maps_to_500(client, monkeypatch):
     def boom():
         raise RuntimeError("no master running")
