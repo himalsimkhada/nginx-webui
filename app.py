@@ -212,7 +212,11 @@ def api_site(name=""):
     body = request.get_json(silent=True) or {}
     try:
         if "content" in body:
-            result = mgr.update_site(name, content=body.get("content", ""))
+            result = mgr.update_site(
+                name,
+                content=body.get("content", ""),
+                new_name=body.get("new_name"),
+            )
         else:
             result = mgr.update_site(
                 name,
@@ -220,6 +224,7 @@ def api_site(name=""):
                 upstream=body.get("upstream"),
                 port=body.get("port", 80),
                 websocket=bool(body.get("websocket")),
+                new_name=body.get("new_name"),
             )
         return _ok(result)
     except RuntimeError as e:

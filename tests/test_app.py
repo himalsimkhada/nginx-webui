@@ -133,6 +133,16 @@ def test_site_update_requires_valid_state(client):
     assert r.status_code == 400
 
 
+def test_site_rename_via_put(client):
+    _login(client)
+    client.post("/api/site", json={"name": "api", "domain": "api.x.com", "upstream": "http://127.0.0.1:1"})
+    r = client.put("/api/site/api", json={"domain": "api.x.com", "upstream": "http://10.0.0.9:9000", "new_name": "api2"})
+    assert r.status_code == 200
+    assert r.get_json()["data"]["name"] == "api2"
+    assert client.get("/api/site/api").status_code == 404
+    assert "proxy_pass http://10.0.0.9:9000;" in client.get("/api/site/api2").get_json()["data"]["content"]
+
+
 def test_backup_and_restore_roundtrip(client):
     _login(client)
     client.put("/api/site/a.test", json={"content": "server {}"})

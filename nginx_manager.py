@@ -272,24 +272,47 @@ def write_site(name, content):
     return {"name": name, "path": str(path)}
 
 
-def update_site(name, content=None, domain=None, upstream=None, port=80, websocket=False):
-    """Update a site either from raw content or from wizard fields."""
+def update_site(name, content=None, domain=None, upstream=None, port=80, websocket=False, new_name=None):
+    """Update a site from raw content or wizard fields; optionally rename the file."""
+    new_name = _safe_site_name(new_name) if new_name not in (None, "") else None
+    if new_name and new_name != name:
+        if (_sites_available_dir() / new_name).exists():
+            raise RuntimeError(f"Site {new_name} already exists")
     if content is not None:
-        return write_site(name, content)
-    name = _safe_site_name(name)
-    path = _sites_available_dir() / name
-    if not path.exists():
-        raise RuntimeError(f"Site {name} not found")
-    cur = read_site(name)
-    fields = cur["fields"]
-    new_domain = (domain if domain not in (None, "") else fields.get("server_name")) or ""
-    new_upstream = (upstream if upstream not in (None, "") else fields.get("proxy_pass")) or "http://127.0.0.1:3000"
-    new_port = int(port) if port not in (None, "") else (fields.get("listen") or 80)
-    if not new_domain:
-        raise RuntimeError("Provide a domain to edit this site from the form")
-    body = make_server_block(new_domain, new_upstream, port=new_port, websocket=bool(websocket))
-    _write_file(path, body)
-    return {"name": name, "path": str(path)}
+        result = write_site(name, content)
+    else:
+        path = _sites_available_dir() / name
+        if not path.exists():
+            raise RuntimeError(f"Site {name} not found")
+        cur = read_site(name)
+        fields = cur["fields"]
+        new_domain = (domain if domain not in (None, "") else fields.get("server_name")) or ""
+        new_upstream = (upstream if upstream not in (None, "") else fields.get("proxy_pass")) or "http://127.0.0.1:3000"
+        new_port = int(port) if port not in (None, "") else (fields.get("listen") or 80)
+        if not new_domain:
+            raise RuntimeError("Provide a domain to edit this site from the form")
+        body = make_server_block(new_domain, new_upstream, port=new_port, websocket=bool(websocket))
+        _write_file(path, body)
+        result = {"name": name, "path": str(path)}
+    if new_name and new_name != name:
+        _rename_site(name, new_name)
+        result["name"] = new_name
+        result["path"] = str(_sites_available_dir() / new_name)
+    return result
+
+
+def _rename_site(old, new):
+    available = _sites_available_dir()
+    enabled = _sites_enabled_dir()
+    old_path, new_path = available / old, available / new
+    try:
+        old_path.rename(new_path)
+    except PermissionError:
+        _run(f"{_sudo()}mv {shlex.quote(str(old_path))} {shlex.quote(str(new_path))}")
+    old_link, new_link = enabled / old, enabled / new
+    if old_link.exists() or old_link.is_symlink():
+        _unlink(old_link)
+        _link(new_path, new_link)
 
 
 def delete_site(name):

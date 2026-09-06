@@ -194,6 +194,29 @@ def test_update_site_needs_domain(conf):
         mgr.update_site("plain")  # no content, no fields, no server_name => raise
 
 
+def test_update_site_rename(conf):
+    mgr.toggle_site("example.test", enable=True)
+    res = mgr.update_site("example.test", domain="renamed.test", new_name="moved")
+    assert res["name"] == "moved"
+    assert (conf / "sites-available" / "moved").exists()
+    assert not (conf / "sites-available" / "example.test").exists()
+    assert (conf / "sites-enabled" / "moved").exists()  # symlink followed the rename
+    content = mgr.read_site("moved")["content"]
+    assert "server_name renamed.test;" in content
+
+
+def test_update_site_rename_collision(conf):
+    mgr.create_site("other", "other.test", "http://10.0.0.1:1")
+    with pytest.raises(RuntimeError):
+        mgr.update_site("example.test", new_name="other")
+
+
+def test_update_site_rename_keeps_content(conf):
+    mgr.update_site("example.test", content="server { listen 90; }", new_name="rawsite")
+    assert not (conf / "sites-available" / "example.test").exists()
+    assert (conf / "sites-available" / "rawsite").exists()
+
+
 class FakeHTTPResp:
     def __init__(self, body, status=200, server="nginx/1.24.0"):
         self.body = body
