@@ -166,6 +166,49 @@ def test_make_server_block_sanity():
     assert "listen 443" in body
 
 
+def test_make_server_block_tls():
+    body = mgr.make_server_block("s.test", "http://10.0.0.1:9000", port=443, tls=True,
+                                 cert="/etc/ssl/full.pem", key="/etc/ssl/key.pem", redirect_http=True,
+                                 client_max_body_size="10m", proxy_read_timeout="90s")
+    assert "listen 443 ssl;" in body
+    assert "ssl_certificate /etc/ssl/full.pem;" in body
+    assert "ssl_certificate_key /etc/ssl/key.pem;" in body
+    assert "client_max_body_size 10m;" in body
+    assert "proxy_read_timeout 90s;" in body
+    assert "return 301 https://$host$request_uri;" in body
+    assert body.count("server {") == 2
+
+
+def test_make_server_block_tls_requires_cert():
+    with pytest.raises(RuntimeError):
+        mgr.make_server_block("s.test", "http://x", tls=True)
+
+
+def test_read_site_parses_common_fields(conf):
+    mgr.create_site(
+        "tls.test", "tls.test", "http://127.0.0.1:3000", port=443,
+        tls=True, cert="/etc/ssl/full.pem", key="/etc/ssl/key.pem",
+        redirect_http=True, client_max_body_size="10m", proxy_read_timeout="90s",
+    )
+    f = mgr.read_site("tls.test")["fields"]
+    assert f["ssl"] is True
+    assert f["ssl_certificate"] == "/etc/ssl/full.pem"
+    assert f["ssl_certificate_key"] == "/etc/ssl/key.pem"
+    assert f["redirect_http"] is True
+    assert f["client_max_body_size"] == "10m"
+    assert f["proxy_read_timeout"] == "90s"
+
+
+def test_update_site_tls_off_removes_ssl(conf):
+    mgr.create_site("x.test", "x.test", "http://127.0.0.1:3000", port=443,
+                    tls=True, cert="/etc/ssl/full.pem", key="/etc/ssl/key.pem", redirect_http=True)
+    mgr.update_site("x.test", tls=False)
+    f = mgr.read_site("x.test")["fields"]
+    assert f["ssl"] is False
+    assert f["redirect_http"] is False
+    assert "ssl_certificate" not in mgr.read_site("x.test")["content"]
+
+
 def test_read_site_parses_fields(conf):
     d = mgr.read_site("example.test")
     assert d["fields"]["server_name"] == "example.test"

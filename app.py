@@ -225,6 +225,12 @@ def api_site(name=""):
                 port=body.get("port", 80),
                 websocket=bool(body.get("websocket")),
                 new_name=body.get("new_name"),
+                tls=body.get("tls"),
+                cert=body.get("cert"),
+                key=body.get("key"),
+                redirect_http=body.get("redirect_http"),
+                client_max_body_size=body.get("client_max_body_size"),
+                proxy_read_timeout=body.get("proxy_read_timeout"),
             )
         return _ok(result)
     except RuntimeError as e:
@@ -250,6 +256,12 @@ def api_create_site():
             port=body.get("port", 80),
             websocket=bool(body.get("websocket")),
             overwrite=bool(body.get("overwrite")),
+            tls=bool(body.get("tls")),
+            cert=body.get("cert"),
+            key=body.get("key"),
+            redirect_http=bool(body.get("redirect_http")),
+            client_max_body_size=body.get("client_max_body_size"),
+            proxy_read_timeout=body.get("proxy_read_timeout"),
         )
         return _ok(result)
     except RuntimeError as e:

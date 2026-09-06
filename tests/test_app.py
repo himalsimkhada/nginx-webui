@@ -116,6 +116,20 @@ def test_create_site_route(client):
     assert "server_name api.x.com;" in client.get("/api/site/api").get_json()["data"]["content"]
 
 
+def test_create_site_route_tls(client):
+    _login(client)
+    r = client.post("/api/site", json={
+        "name": "secure", "domain": "secure.x.com", "upstream": "http://127.0.0.1:1",
+        "port": 443, "tls": True, "cert": "/etc/ssl/f.pem", "key": "/etc/ssl/k.pem",
+        "redirect_http": True, "client_max_body_size": "25m",
+    })
+    assert r.status_code == 200
+    d = client.get("/api/site/secure").get_json()["data"]
+    assert "listen 443 ssl;" in d["content"]
+    assert d["fields"]["redirect_http"] is True
+    assert d["fields"]["client_max_body_size"] == "25m"
+
+
 def test_site_update_from_fields(client):
     _login(client)
     client.post("/api/site", json={"name": "api", "domain": "api.x.com", "upstream": "http://127.0.0.1:1"})
