@@ -10,6 +10,7 @@ services:
       SECRET_KEY: ${SECRET_KEY:-change-me}
       NGINX_CONF_DIR: /etc/nginx
       LOG_FILE: ${LOG_FILE:-}
+      NGINX_STATUS_URL: ${NGINX_STATUS_URL:-}
       SERVICE_NAME: nginx-webui
     volumes:
       - /etc/nginx:/etc/nginx:rw

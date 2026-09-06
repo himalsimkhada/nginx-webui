@@ -5,6 +5,7 @@ is faked via _run, so the suite works on CI without nginx installed.
 """
 import os
 import sys
+import urllib.request
 
 import pytest
 
@@ -163,6 +164,83 @@ def test_make_server_block_sanity():
     body = mgr.make_server_block("Example.COM", "http://10.0.0.1:9000", port=443)
     assert "server_name example.com;" in body
     assert "listen 443" in body
+
+
+def test_read_site_parses_fields(conf):
+    d = mgr.read_site("example.test")
+    assert d["fields"]["server_name"] == "example.test"
+    assert d["fields"]["listen"] == 80
+    assert d["fields"]["proxy_pass"] == "http://127.0.0.1:3000"
+    assert d["fields"]["websocket"] is False
+
+
+def test_update_site_from_fields(conf):
+    mgr.update_site("example.test", domain="new.test", upstream="http://10.0.0.5:9000", port=443, websocket=True)
+    content = mgr.read_site("example.test")["content"]
+    assert "server_name new.test;" in content
+    assert "proxy_pass http://10.0.0.5:9000;" in content
+    assert "listen 443" in content
+    assert "Connection 'upgrade'" in content
+
+
+def test_update_site_unknown(conf):
+    with pytest.raises(RuntimeError):
+        mgr.update_site("ghost", domain="x.test", upstream="http://x")
+
+
+def test_update_site_needs_domain(conf):
+    mgr.write_site("plain", "server { listen 80; }")
+    with pytest.raises(RuntimeError):
+        mgr.update_site("plain")  # no content, no fields, no server_name => raise
+
+
+class FakeHTTPResp:
+    def __init__(self, body, status=200, server="nginx/1.24.0"):
+        self.body = body
+        self.status = status
+        self.headers = {"Server": server}
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def read(self, n):
+        return self.body.encode()
+
+
+def test_re_status_http(conf, monkeypatch):
+    monkeypatch.setattr(mgr, "NGINX_STATUS_URL", "http://example/nginx_status")
+    monkeypatch.setattr(
+        urllib.request, "urlopen",
+        lambda req, timeout=None: FakeHTTPResp("Active connections: 12\nserver accepts handled requests"),
+    )
+    s = mgr.status()
+    assert s["running"] is True
+    assert s["status_source"] == "http"
+    assert s["version"] == "1.24.0"
+    assert s["active_connections"] == 12
+
+
+def test_status_http_down(conf, monkeypatch):
+    import urllib.error
+
+    def boom(req, timeout=None):
+        raise urllib.error.URLError("connection refused")
+    monkeypatch.setattr(mgr, "NGINX_STATUS_URL", "http://example/nginx_status")
+    monkeypatch.setattr(urllib.request, "urlopen", boom)
+    s = mgr.status()
+    assert s["running"] is False
+    assert "failed" in s["error"]
+
+
+def test_status_http_ignored_when_unset(conf, monkeypatch):
+    monkeypatch.setattr(mgr, "NGINX_STATUS_URL", "")
+    monkeypatch.setattr(mgr, "_run", fake_run())
+    s = mgr.status()
+    assert s.get("status_source") != "http"
+    assert s["running"] is True
 
 
 def test_backup_restore_roundtrip(conf):

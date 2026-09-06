@@ -116,6 +116,23 @@ def test_create_site_route(client):
     assert "server_name api.x.com;" in client.get("/api/site/api").get_json()["data"]["content"]
 
 
+def test_site_update_from_fields(client):
+    _login(client)
+    client.post("/api/site", json={"name": "api", "domain": "api.x.com", "upstream": "http://127.0.0.1:1"})
+    r = client.put("/api/site/api", json={"domain": "api2.x.com", "upstream": "http://10.0.0.9:9000", "port": 443})
+    assert r.status_code == 200
+    d = client.get("/api/site/api").get_json()["data"]
+    assert "server_name api2.x.com;" in d["content"]
+    assert d["fields"]["listen"] == 443
+    assert d["fields"]["proxy_pass"] == "http://10.0.0.9:9000"
+
+
+def test_site_update_requires_valid_state(client):
+    _login(client)
+    r = client.put("/api/site/ghost", json={"domain": "x.test", "upstream": "http://x"})
+    assert r.status_code == 400
+
+
 def test_backup_and_restore_roundtrip(client):
     _login(client)
     client.put("/api/site/a.test", json={"content": "server {}"})

@@ -9,12 +9,17 @@ import shlex
 import subprocess
 import tarfile
 import tempfile
+import urllib.request
 from pathlib import Path
 
 NGINX_CONF_DIR = os.environ.get("NGINX_CONF_DIR", "/etc/nginx")
 NGINX_PIDFILE = "/run/nginx.pid"
 LOG_FILE = os.environ.get("LOG_FILE", "").strip()
 TIMEOUT = int(os.environ.get("NGINX_TIMEOUT", "10"))
+# Set this to an HTTP endpoint nginx itself serves (e.g. stub_status at
+# /nginx_status) to detect "running" over HTTP — required when nginx-webui
+# runs in a container and cannot see the host's /proc or /run/nginx.pid.
+NGINX_STATUS_URL = os.environ.get("NGINX_STATUS_URL", "").strip()
 
 NGINX_CONF = f"{NGINX_CONF_DIR}/nginx.conf"
 _IS_ROOT = hasattr(os, "geteuid") and os.geteuid() == 0
@@ -71,6 +76,8 @@ def _process_alive(pid):
 
 
 def status():
+    if NGINX_STATUS_URL:
+        return _status_http()
     version = ""
     out, err, _ = _run("nginx -v")
     version = (err or out).strip().replace("nginx version:", "").replace("nginx/", "", 1).strip()
@@ -105,6 +112,34 @@ def status():
         "config_file": config or NGINX_CONF,
         "conf_dir": NGINX_CONF_DIR,
     }
+
+
+def _status_http():
+    """Status via an HTTP probe of nginx itself (works from inside a container).
+
+    Point NGINX_STATUS_URL at a stub_status endpoint, e.g.
+    NGINX_STATUS_URL=http://host.docker.internal:8080/nginx_status
+    """
+    info = {
+        "version": "(unknown)", "running": False, "master_pid": "", "workers": 0,
+        "config_file": NGINX_CONF, "conf_dir": NGINX_CONF_DIR, "status_source": "http",
+    }
+    try:
+        req = urllib.request.Request(NGINX_STATUS_URL, headers={"User-Agent": "nginx-webui/1"})
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            body = resp.read(4096).decode("utf-8", errors="replace")
+            server = resp.headers.get("Server", "")
+    except OSError as e:
+        info["error"] = f"status probe failed: {e}"
+        return info
+    m = re.search(r"nginx/([\d.]+)", server or "")
+    if m:
+        info["version"] = m.group(1)
+    m = re.search(r"Active connections:\s*(\d+)", body)
+    if m:
+        info["active_connections"] = int(m.group(1))
+    info["running"] = True
+    return info
 
 
 def check_config():
@@ -204,19 +239,56 @@ def sites():
     return out
 
 
+def _site_fields(content):
+    """Best-effort parse of the fields the wizard manages."""
+    def _one(pat):
+        m = re.search(pat, content)
+        return m.group(1).strip() if m else ""
+    listen = _one(r"listen\s+(\d+)")
+    names = _one(r"server_name\s+([^;]+);")
+    return {
+        "server_name": names.split()[0] if names else "",
+        "listen": int(listen) if listen.isdigit() else None,
+        "proxy_pass": _one(r"proxy_pass\s+([^\s;]+);"),
+        "websocket": "upgrade" in content,
+    }
+
+
 def read_site(name):
     name = _safe_site_name(name)
     path = _sites_available_dir() / name
     if not path.exists():
         raise RuntimeError(f"Site {name} not found")
     enabled = (_sites_enabled_dir() / name).exists()
-    return {"name": name, "content": _read_file(path), "enabled": enabled, "path": str(path)}
+    content = _read_file(path)
+    return {"name": name, "content": content, "enabled": enabled, "path": str(path),
+            "fields": _site_fields(content)}
 
 
 def write_site(name, content):
     name = _safe_site_name(name)
     path = _sites_available_dir() / name
     _write_file(path, content)
+    return {"name": name, "path": str(path)}
+
+
+def update_site(name, content=None, domain=None, upstream=None, port=80, websocket=False):
+    """Update a site either from raw content or from wizard fields."""
+    if content is not None:
+        return write_site(name, content)
+    name = _safe_site_name(name)
+    path = _sites_available_dir() / name
+    if not path.exists():
+        raise RuntimeError(f"Site {name} not found")
+    cur = read_site(name)
+    fields = cur["fields"]
+    new_domain = (domain if domain not in (None, "") else fields.get("server_name")) or ""
+    new_upstream = (upstream if upstream not in (None, "") else fields.get("proxy_pass")) or "http://127.0.0.1:3000"
+    new_port = int(port) if port not in (None, "") else (fields.get("listen") or 80)
+    if not new_domain:
+        raise RuntimeError("Provide a domain to edit this site from the form")
+    body = make_server_block(new_domain, new_upstream, port=new_port, websocket=bool(websocket))
+    _write_file(path, body)
     return {"name": name, "path": str(path)}
 
 

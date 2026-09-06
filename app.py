@@ -211,7 +211,17 @@ def api_site(name=""):
             return _err(str(e), 400)
     body = request.get_json(silent=True) or {}
     try:
-        return _ok(mgr.write_site(name, body.get("content", "")))
+        if "content" in body:
+            result = mgr.update_site(name, content=body.get("content", ""))
+        else:
+            result = mgr.update_site(
+                name,
+                domain=body.get("domain"),
+                upstream=body.get("upstream"),
+                port=body.get("port", 80),
+                websocket=bool(body.get("websocket")),
+            )
+        return _ok(result)
     except RuntimeError as e:
         return _err(str(e), 400)
 
