@@ -3,6 +3,7 @@ validation (nginx -t), reload, logs, backup/restore, and server-block
 generation. API-only backend — no UI served here.
 """
 import io
+import json
 import os
 import re
 import shlex
@@ -458,6 +459,91 @@ def create_site(name, domain, upstream, port=80, websocket=False, overwrite=Fals
                              proxy_read_timeout=proxy_read_timeout)
     _write_file(path, body)
     return {"name": name, "path": str(path), "enabled": False}
+
+
+# ── Saved SSL certificates (named cert/key pairs) ────────────────────────────
+# Sites reference these in the UI; only the paths matter to the generated
+# config, so storing them here just avoids retyping long letsencrypt paths.
+
+SSL_STORE_FILE = os.environ.get("SSL_STORE_FILE", f"{NGINX_CONF_DIR}/webui-ssl-store.json")
+
+
+def _ssl_name_ok(name):
+    return bool(name) and name != "." and name != ".." and "/" not in name and "\\" not in name
+
+
+def _load_ssl_store():
+    try:
+        data = json.loads(Path(SSL_STORE_FILE).read_text())
+        if isinstance(data, dict):
+            return {k: v for k, v in data.items() if isinstance(v, dict)}
+        if isinstance(data, list):
+            return {e["name"]: e for e in data
+                    if isinstance(e, dict) and e.get("name") and isinstance(e.get("cert"), str)}
+    except (OSError, ValueError):
+        pass
+    return {}
+
+
+def _save_ssl_store(entries):
+    payload = json.dumps(entries, indent=2)
+    dirpath = Path(SSL_STORE_FILE).parent
+    dirpath.mkdir(parents=True, exist_ok=True)
+    if _IS_ROOT:
+        tmp = dirpath / f".ssl.{os.getpid()}.tmp"
+        tmp.write_text(payload)
+        tmp.replace(SSL_STORE_FILE)
+    else:
+        _write_file(SSL_STORE_FILE, payload)
+
+
+def ssl_certs():
+    return [{"name": name, **entry} for name, entry in sorted(_load_ssl_store().items())]
+
+
+def get_ssl(name):
+    entry = _load_ssl_store().get(name)
+    if not entry:
+        raise RuntimeError(f"Certificate '{name}' not found")
+    return {"name": name, **entry}
+
+
+def add_ssl(name, cert, key):
+    name = (name or "").strip()
+    cert = (cert or "").strip()
+    key = (key or "").strip()
+    if not _ssl_name_ok(name):
+        raise RuntimeError("Certificate name may not be empty, '.', '..' or contain '/' or '\\\\'")
+    if not cert or not key:
+        raise RuntimeError("Certificate and key paths are required")
+    store = _load_ssl_store()
+    if name in store:
+        raise RuntimeError(f"Certificate '{name}' already exists")
+    store[name] = {"cert": cert, "key": key}
+    _save_ssl_store(store)
+    return {"name": name, "cert": cert, "key": key}
+
+
+def update_ssl(name, cert, key):
+    cert = (cert or "").strip()
+    key = (key or "").strip()
+    if not cert or not key:
+        raise RuntimeError("Certificate and key paths are required")
+    store = _load_ssl_store()
+    if name not in store:
+        raise RuntimeError(f"Certificate '{name}' not found")
+    store[name] = {"cert": cert, "key": key}
+    _save_ssl_store(store)
+    return {"name": name, "cert": cert, "key": key}
+
+
+def delete_ssl(name):
+    store = _load_ssl_store()
+    if name not in store:
+        raise RuntimeError(f"Certificate '{name}' not found")
+    del store[name]
+    _save_ssl_store(store)
+    return {"name": name}
 
 
 # ── Logs ────────────────────────────────────────────────────────────────────

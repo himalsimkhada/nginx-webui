@@ -268,6 +268,31 @@ def api_create_site():
         return _err(str(e), 400)
 
 
+@app.route("/api/ssl", methods=["GET", "POST"])
+def api_ssl():
+    if request.method == "GET":
+        return _ok(mgr.ssl_certs())
+    body = request.get_json(silent=True) or {}
+    try:
+        return _ok(mgr.add_ssl(body.get("name", ""), body.get("cert"), body.get("key")))
+    except RuntimeError as e:
+        return _err(str(e), 400)
+
+
+@app.route("/api/ssl/<name>", methods=["PUT", "DELETE"])
+def api_ssl_one(name=""):
+    if request.method == "DELETE":
+        try:
+            return _ok(mgr.delete_ssl(name))
+        except RuntimeError as e:
+            return _err(str(e), 404)
+    body = request.get_json(silent=True) or {}
+    try:
+        return _ok(mgr.update_ssl(name, body.get("cert"), body.get("key")))
+    except RuntimeError as e:
+        return _err(str(e), 400)
+
+
 @app.route("/api/logs", methods=["GET"])
 def api_logs():
     lines = int(request.args.get("lines", "100"))

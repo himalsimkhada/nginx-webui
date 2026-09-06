@@ -260,6 +260,71 @@ def test_update_site_rename_keeps_content(conf):
     assert (conf / "sites-available" / "rawsite").exists()
 
 
+# ── Saved SSL certificates ───────────────────────────────────────────────
+
+@pytest.fixture()
+def ssl_store(conf, monkeypatch):
+    path = conf / "webui-ssl-store.json"
+    monkeypatch.setattr(mgr, "SSL_STORE_FILE", str(path))
+    if path.exists():
+        path.unlink()
+    return path
+
+
+def test_ssl_crud(ssl_store):
+    assert mgr.ssl_certs() == []
+    mgr.add_ssl("le-main", "/etc/letsencrypt/full.pem", "/etc/letsencrypt/key.pem")
+    certs = mgr.ssl_certs()
+    assert len(certs) == 1
+    assert certs[0]["name"] == "le-main"
+    assert certs[0]["cert"] == "/etc/letsencrypt/full.pem"
+    assert certs[0]["key"] == "/etc/letsencrypt/key.pem"
+    mgr.update_ssl("le-main", "/c2.pem", "/k2.pem")
+    assert mgr.get_ssl("le-main")["cert"] == "/c2.pem"
+    assert mgr.get_ssl("le-main")["key"] == "/k2.pem"
+    mgr.delete_ssl("le-main")
+    assert mgr.ssl_certs() == []
+
+
+def test_ssl_validation(ssl_store):
+    with pytest.raises(RuntimeError):
+        mgr.add_ssl("", "/c", "/k")
+    with pytest.raises(RuntimeError):
+        mgr.add_ssl("bad/name", "/c", "/k")
+    with pytest.raises(RuntimeError):
+        mgr.add_ssl("x", "", "/k")
+    with pytest.raises(RuntimeError):
+        mgr.add_ssl("x", "/c", "")
+
+
+def test_ssl_duplicate(ssl_store):
+    mgr.add_ssl("x", "/c", "/k")
+    with pytest.raises(RuntimeError):
+        mgr.add_ssl("x", "/c2", "/k2")
+
+
+def test_ssl_missing_ops(ssl_store):
+    with pytest.raises(RuntimeError):
+        mgr.update_ssl("ghost", "/c", "/k")
+    with pytest.raises(RuntimeError):
+        mgr.delete_ssl("ghost")
+
+
+def test_ssl_store_persists_reload(conf, monkeypatch):
+    path = conf / "webui-ssl-store.json"
+    monkeypatch.setattr(mgr, "SSL_STORE_FILE", str(path))
+    mgr.add_ssl("persist", "/c.pem", "/k.pem")
+    assert mgr._load_ssl_store()["persist"]["cert"] == "/c.pem"
+    assert path.exists()
+
+
+def test_ssl_store_corrupt_file_ignored(ssl_store):
+    ssl_store.write_text("{not json")
+    assert mgr.ssl_certs() == []
+    mgr.add_ssl("fresh", "/c", "/k")
+    assert len(mgr.ssl_certs()) == 1
+
+
 class FakeHTTPResp:
     def __init__(self, body, status=200, server="nginx/1.24.0"):
         self.body = body

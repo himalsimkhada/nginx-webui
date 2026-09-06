@@ -172,3 +172,33 @@ def test_restore_rejects_garbage(client):
     r = client.post("/api/restore", json={"data": "not-base64!!", "check": False})
     assert r.status_code == 400
     assert r.get_json()["ok"] is False
+
+
+# ── SSL certificate store routes ────────────────────────────────────────
+
+def _ssl_path():
+    return str(mgr.NGINX_CONF_DIR) + "/ssl-store.json"
+
+
+def test_ssl_route_crud(client, monkeypatch):
+    monkeypatch.setattr(mgr, "SSL_STORE_FILE", _ssl_path())
+    _login(client)
+    assert client.get("/api/ssl").get_json()["data"] == []
+    r = client.post("/api/ssl", json={"name": "le", "cert": "/c.pem", "key": "/k.pem"})
+    assert r.status_code == 200
+    assert client.get("/api/ssl").get_json()["data"][0]["name"] == "le"
+    r = client.put("/api/ssl/le", json={"cert": "/c2.pem", "key": "/k2.pem"})
+    assert r.status_code == 200
+    assert client.get("/api/ssl").get_json()["data"][0]["cert"] == "/c2.pem"
+    assert client.delete("/api/ssl/le").status_code == 200
+    assert client.get("/api/ssl").get_json()["data"] == []
+
+
+def test_ssl_route_errors(client, monkeypatch):
+    monkeypatch.setattr(mgr, "SSL_STORE_FILE", _ssl_path())
+    _login(client)
+    assert client.post("/api/ssl", json={"name": "", "cert": "/c", "key": "/k"}).status_code == 400
+    assert client.post("/api/ssl", json={"name": "dup", "cert": "/c", "key": "/k"}).status_code == 200
+    assert client.post("/api/ssl", json={"name": "dup", "cert": "/x", "key": "/y"}).status_code == 400
+    assert client.delete("/api/ssl/ghost").status_code == 404
+    assert client.put("/api/ssl/ghost", json={"cert": "/c", "key": "/k"}).status_code == 400
