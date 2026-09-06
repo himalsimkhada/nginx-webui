@@ -5,7 +5,9 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/nginx-webui-host-agent.py --bind 127.0.0.1 --port 9401
+# Bind 0.0.0.0 so Docker containers reach it via host.docker.internal.
+# The agent only acts on the paths below; restrict with a firewall if exposed.
+ExecStart=/usr/local/bin/nginx-webui-host-agent.py --bind 0.0.0.0 --port 9401
 Restart=on-failure
 RestartSec=3
 # Run as root. If unprivileged, instead install passwordless sudo rules, e.g.:
