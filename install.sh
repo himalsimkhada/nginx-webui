@@ -10,6 +10,7 @@
 #
 # Usage:  sudo ./install.sh   (or: ./install.sh --check | --help)
 # One-liner:  curl -fsSL https://raw.githubusercontent.com/himalsimkhada/nginx-webui/main/install.sh | bash
+# Headless:   NGINX_MODE=1 WEBUI_PASSWORD=x TARGET_DIR=~/nginx-webui curl -fsSL ... | bash
 
 set -euo pipefail
 
@@ -35,6 +36,42 @@ die()   { printf '%s%s%s\n' "${C_RED}FATAL:$*${C_RESET}" >&2; exit 1; }
 
 has_cmd() { command -v "$1" >/dev/null 2>&1; }
 
+# ── Input helpers ────────────────────────────────────────────────────────
+# Under `curl ... | bash` stdin is the script stream, and a nested run
+# inherits that consumed stream, so bare `read` gets EOF instantly. Read from
+# the controlling terminal when one exists; headless runs use env vars.
+
+have_tty() { ( exec </dev/tty ) 2>/dev/null; }
+
+read_input() {
+  local var="$1" prompt="${2:-}"
+  local envval=""
+  case "$var" in
+    target) envval="${TARGET_DIR:-}";;
+    choice) envval="${NGINX_MODE:-}";;
+    ans)    envval="${NGINX_YES:-}";;
+  esac
+  if [ -n "$envval" ]; then
+    printf -v "$var" '%s' "$envval"
+    return 0
+  fi
+  if have_tty; then
+    read -r -p "$prompt" "$var" < /dev/tty
+  else
+    die "No terminal available and \$$var was not set (${prompt%:}). Re-run from a terminal or set the env var."
+  fi
+}
+
+read_input_silent() {
+  local var="$1" prompt="${2:-}"
+  if have_tty; then
+    read -r -s -p "$prompt" "$var" < /dev/tty
+  else
+    die "No terminal available for password input. Set WEBUI_PASSWORD=... and re-run."
+  fi
+  echo ""
+}
+
 # ── Self-bootstrap ────────────────────────────────────────────────────────
 # Support one-liner installs (curl ... | bash): when the script is streamed
 # there is no repo checkout in $DIR, so fetch the repository first and then
@@ -47,7 +84,7 @@ if [ ! -f "$DIR/app.py" ] || [ ! -f "$DIR/docker-compose.yml" ]; then
 
   default_target="$HOME/nginx-webui"
   target=""
-  read -r -p "Install the project into [$default_target]: " target
+  read_input target "Install the project into [$default_target]: " || true
   target="${target:-$default_target}"
 
   mkdir -p "$(dirname "$target")"
@@ -102,22 +139,24 @@ random_secret() {
 }
 
 ask_password() {
-  # Prompts until a non-empty password is given; stores in WEBUI_PASSWORD.
-  WEBUI_PASSWORD=""
-  while [ -z "$WEBUI_PASSWORD" ]; do
-    read -r -s -p "    Web UI password (used to log in): " WEBUI_PASSWORD
-    echo ""
-    if [ -z "$WEBUI_PASSWORD" ]; then
-      warn "Password cannot be empty. Leaving it blank is not supported."
-    else
-      read -r -s -p "    Confirm password: " WEBUI_PASSWORD_CONFIRM
-      echo ""
-      if [ "$WEBUI_PASSWORD" != "$WEBUI_PASSWORD_CONFIRM" ]; then
-        warn "Passwords do not match. Try again."
-        WEBUI_PASSWORD=""
+  # Accepts WEBUI_PASSWORD from the environment (headless runs) or prompts.
+  if [ -z "${WEBUI_PASSWORD:-}" ]; then
+    WEBUI_PASSWORD=""
+    while [ -z "$WEBUI_PASSWORD" ]; do
+      read_input_silent WEBUI_PASSWORD "    Web UI password (used to log in): "
+      if [ -z "$WEBUI_PASSWORD" ]; then
+        warn "Password cannot be empty. Leaving it blank is not supported."
+      else
+        read_input_silent WEBUI_PASSWORD_CONFIRM "    Confirm password: "
+        if [ "$WEBUI_PASSWORD" != "$WEBUI_PASSWORD_CONFIRM" ]; then
+          warn "Passwords do not match. Try again."
+          WEBUI_PASSWORD=""
+        fi
       fi
-    fi
-  done
+    done
+  else
+    ok "Using WEBUI_PASSWORD from the environment"
+  fi
   SECRET_KEY="$(random_secret)"
 }
 
@@ -157,7 +196,7 @@ offer_webui_portal() {
     warn "The webui admin dashboard (himalsimkhada/webui) was not detected on http://127.0.0.1:${WEBUI_PORT}."
   fi
   info "The nginx dashboard is hosted by the webui facade; without it you only get the API."
-  read -r -p "    Install the webui admin dashboard now? [Y/n] " ans
+  read_input ans "    Install the webui admin dashboard now? [Y/n] "
   if [ "${ans:-y}" = "n" ] || [ "${ans:-y}" = "N" ]; then
     warn "Install it later with:  curl -fsSL https://raw.githubusercontent.com/himalsimkhada/webui/main/install.sh | bash"
     return
@@ -189,7 +228,7 @@ ensure_host_nginx() {
   local ngconf="/etc/nginx/nginx.conf"
   if ! has_cmd nginx; then
     warn "nginx is not installed."
-    read -r -p "    Install nginx now? [y/N] " ans
+    read_input ans "    Install nginx now? [y/N] "
     if [ "${ans:-n}" != "y" ] && [ "${ans:-n}" != "Y" ]; then
       die "nginx is required. Re-run after installing nginx."
     fi
@@ -222,7 +261,7 @@ ensure_host_agent() {
 ensure_docker() {
   if ! has_cmd docker || ! docker compose version >/dev/null 2>&1; then
     warn "Docker with the compose plugin is required but not installed."
-    read -r -p "    Install Docker now? [y/N] " ans
+    read_input ans "    Install Docker now? [y/N] " ans
     if [ "${ans:-n}" != "y" ] && [ "${ans:-n}" != "Y" ]; then
       die "Docker is required for this mode. Re-run after installing Docker."
     fi
@@ -356,7 +395,7 @@ show_menu() {
   echo "  2) Manual                - nginx and the web UI both installed directly on THIS machine"
   echo ""
   while :; do
-    read -r -p "Enter your choice [1-2]: " choice
+    read_input choice "Enter your choice [1-2]: "
     case "$choice" in
       1) mode_docker; return;;
       2) mode_manual; return;;
