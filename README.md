@@ -129,6 +129,11 @@ You'll be asked which deployment you want:
 > **Dry run first:** `./install.sh --check` reports what the installer detects
 > on your machine (distro, nginx, host agent, Docker, python3) without changing
 > a thing.
+>
+> **Dashboard included:** the installer detects when the companion webui admin
+> facade ([himalsimkhada/webui](https://github.com/himalsimkhada/webui)) is not
+> running and offers to install it for you — the portal hosts the dashboard UI,
+> while this service stays API-only.
 
 ---
 
@@ -175,7 +180,7 @@ of this for you, writes `.env`, then:
 
 ```bash
 cp .env.example .env
-docker compose up -d --build
+docker compose up -d
 ```
 
 `.env` sets `NGINX_CTL_URL=http://host.docker.internal:9401`, so status, check,

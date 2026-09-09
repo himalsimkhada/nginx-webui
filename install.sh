@@ -14,6 +14,8 @@
 set -euo pipefail
 
 REPO_URL="https://github.com/himalsimkhada/nginx-webui.git"
+WEBUI_REPO_URL="https://github.com/himalsimkhada/webui.git"
+WEBUI_PORT="${WEBUI_PORT:-8080}"
 
 DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$DIR"
@@ -125,6 +127,51 @@ write_env_file() {
   info "Writing $envpath"
   cat > "$envpath"
   chmod 600 "$envpath" 2>/dev/null || true
+}
+
+# ── webui admin facade (companion dashboard) ────────────────────────────
+
+webui_detected() {
+  # True when the webui admin facade is already answering on the expected port.
+  if has_cmd curl && curl -fsS --max-time 3 "http://127.0.0.1:${WEBUI_PORT}/healthz" >/dev/null 2>&1; then
+    return 0
+  fi
+  if has_cmd docker && docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^webui-admin$'; then
+    return 0
+  fi
+  return 1
+}
+
+offer_webui_portal() {
+  # The dashboard UI lives in the companion webui facade. If it is not running,
+  # offer to install it now.
+  local tgt="$HOME/webui"
+  if webui_detected; then
+    ok "webui admin dashboard already running on http://127.0.0.1:${WEBUI_PORT}"
+    return
+  fi
+
+  if [ -d "$tgt" ] && [ -f "$tgt/install.sh" ]; then
+    warn "The webui admin dashboard is NOT running but a checkout exists at $tgt (port $WEBUI_PORT)."
+  else
+    warn "The webui admin dashboard (himalsimkhada/webui) was not detected on http://127.0.0.1:${WEBUI_PORT}."
+  fi
+  info "The nginx dashboard is hosted by the webui facade; without it you only get the API."
+  read -r -p "    Install the webui admin dashboard now? [Y/n] " ans
+  if [ "${ans:-y}" = "n" ] || [ "${ans:-y}" = "N" ]; then
+    warn "Install it later with:  curl -fsSL https://raw.githubusercontent.com/himalsimkhada/webui/main/install.sh | bash"
+    return
+  fi
+
+  has_cmd git || die "git is required to clone the webui dashboard."
+  mkdir -p "$HOME"
+  if [ ! -f "$tgt/install.sh" ]; then
+    info "Cloning $WEBUI_REPO_URL into $tgt"
+    git clone --quiet --depth 1 "$WEBUI_REPO_URL" "$tgt"
+  fi
+  info "Running the webui dashboard installer (choose Docker or Manual mode)"
+  bash "$tgt/install.sh"
+  ok "webui admin dashboard installed. Open http://localhost:${WEBUI_PORT}"
 }
 
 # ── nginx + host control agent ───────────────────────────────────────────
@@ -240,10 +287,12 @@ NGINX_STATUS_URL=
 NGINX_CTL_URL=http://host.docker.internal:9401
 EOF
 
-  info "Starting the web UI container (builds the image on first run)"
-  docker compose up -d --build
+  info "Starting the web UI container (pulls the image on first run)"
+  docker compose up -d
   ok "Deployed. Open http://localhost:8400"
   ok "The dashboard manages the HOST nginx (/etc/nginx mounted, agent on :9401)."
+
+  offer_webui_portal
 }
 
 # ── Mode 2: Manual (all on host) ─────────────────────────────────────────
@@ -293,6 +342,8 @@ EOF
   sudo systemctl restart nginx-webui
   ok "Deployed. Open http://localhost:8400"
   ok "Manage with: sudo systemctl status nginx-webui"
+
+  offer_webui_portal
 }
 
 # ── Main menu / flags ────────────────────────────────────────────────────

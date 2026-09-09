@@ -1,6 +1,7 @@
 services:
   nginx-webui:
-    build: .
+    image: ghcr.io/himalsimkhada/webui/nginx-webui:latest
+    # build: .   # optional: build the image from this repo instead of pulling
     container_name: nginx-webui
     restart: unless-stopped
     ports:
